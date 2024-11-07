@@ -65,47 +65,64 @@ def reset_and_close_all_panels():
             globals()[tty_var], globals()[pid_var] = None, None
             print(f"Closed {panel} panel with PID {panel_pid}")
 
-def split_window_layout(panels):
-    """重定向所有面板並關閉視窗，然後按照 panels 開啟新的布局"""
+class SplitWindowLayoutCommand(gdb.Command):
+    """自定義 gdb 命令來管理分窗布局，使用方法：split_window_layout [面板名稱...]"""
 
-    # 重置並關閉所有外部視窗
-    reset_and_close_all_panels()
+    def __init__(self):
+        super().__init__("split_window_layout", gdb.COMMAND_USER)
 
-    # 過濾無效面板名稱，並移除 source 面板
-    valid_panels = [panel for panel in panels if panel in panel_info]
+    def invoke(self, arg, from_tty):
+        panels = gdb.string_to_argv(arg)  # 使用 GDB 的 argument parsing 函數
+        self.split_window_layout(panels)
 
-    # 設置 dashboard 布局，包含 source 面板
-    layout = "source " + " ".join(valid_panels)
-    gdb.execute(f"dashboard -layout {layout}")
-    print(f"Dashboard layout set to: {layout}")
+    def split_window_layout(self, panels):
+        """重定向所有面板並關閉視窗，然後按照 panels 開啟新的布局"""
 
-    # 記錄要打開的終端文件路徑，稍後一次性讀取
-    ttys_to_read = {}
+        # 重置並關閉所有外部視窗
+        reset_and_close_all_panels()
 
-    # 為每個有效面板打開新的終端窗口
-    for panel in valid_panels:
-        tty_var, pid_var = panel_info[panel]
-        
-        # 打開新終端並記錄 TTY 和 PID
-        ttys_to_read[panel] = open_terminal_and_get_tty(f"/tmp/{panel}_tty")
+        # 過濾無效面板名稱，並移除 source 面板
+        valid_panels = [panel for panel in panels if panel in panel_info]
 
-    # 執行指定次數的切回上一個視窗操作 (Alt+k)，次數等於新開啟的視窗數
-    for _ in range(len(valid_panels)):
-        subprocess.run(['xdotool', 'key', 'Alt+k'])
+        # 設置 dashboard 布局，包含 source 面板
+        layout = "source " + " ".join(valid_panels)
+        gdb.execute(f"dashboard -layout {layout}")
+        print(f"Dashboard layout set to: {layout}")
 
-    # 配置每個面板的輸出到新打開的終端
-    for panel, (tty_filepath, pid) in ttys_to_read.items():
-        with open(tty_filepath, 'r') as tty_file:
-            tty = tty_file.read().strip()
-        os.remove(tty_filepath)
+        # 記錄要打開的終端文件路徑，稍後一次性讀取
+        ttys_to_read = {}
 
-        # 更新全局變量，將面板輸出到新終端
-        globals()[panel_info[panel][0]], globals()[panel_info[panel][1]] = tty, pid
-        gdb.execute(f"dashboard {panel} -output {tty}")
-        print(f"{panel.capitalize()} panel output has been redirected to: {tty}")
+        # 為每個有效面板打開新的終端窗口
+        for panel in valid_panels:
+            tty_var, pid_var = panel_info[panel]
+            
+            # 打開新終端並記錄 TTY 和 PID
+            ttys_to_read[panel] = open_terminal_and_get_tty(f"/tmp/{panel}_tty")
 
-    # 顯示 dashboard
-    gdb.execute("dashboard")
+        # 執行指定次數的切回上一個視窗操作 (Alt+k)，次數等於新開啟的視窗數
+        for _ in range(len(valid_panels)):
+            subprocess.run(['xdotool', 'key', 'Alt+k'])
+
+        # 配置每個面板的輸出到新打開的終端
+        for panel, (tty_filepath, pid) in ttys_to_read.items():
+            with open(tty_filepath, 'r') as tty_file:
+                tty = tty_file.read().strip()
+            os.remove(tty_filepath)
+
+            # 更新全局變量，將面板輸出到新終端
+            globals()[panel_info[panel][0]], globals()[panel_info[panel][1]] = tty, pid
+            gdb.execute(f"dashboard {panel} -output {tty}")
+            print(f"{panel.capitalize()} panel output has been redirected to: {tty}")
+
+        # 顯示 dashboard
+        gdb.execute("dashboard")
+
+    def complete(self, text, word):
+        """自定義命令的補全功能，提供所有可用的面板名稱"""
+        return [panel for panel in panel_info if panel.startswith(word)]
+
+# 註冊自定義命令
+SplitWindowLayoutCommand()
 
 # 使用 atexit 在退出時自動關閉所有終端
 def close_terminals():
